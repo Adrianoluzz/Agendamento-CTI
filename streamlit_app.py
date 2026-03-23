@@ -1,6 +1,4 @@
 import streamlit as st
-from library_gsheets_connection import GSheetsConnection # Tente esta se a anterior falhar
-# OU MANTENHA A QUE FUNCIONA NO STREAMLIT ATUAL:
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, timedelta
