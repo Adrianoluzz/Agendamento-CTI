@@ -37,7 +37,7 @@ hide_elements_style = """
 """
 st.markdown(hide_elements_style, unsafe_allow_html=True)
 
-# --- CONFIGURAÇÕES TÉCNICAS (SALA DE TOPOGRAFIA ADICIONADA) ---
+# --- CONFIGURAÇÕES TÉCNICAS ---
 LABS = sorted([
     "Automação", "Química", "Desenho", "Predial", "Hidráulica", 
     "Civil", "Maquete", "Eletrônica", "Física", "Mecânica", 
@@ -149,24 +149,42 @@ elif pagina == "🔐 Administração":
             turno_n = st.radio("Turno", list(OPCOES_POR_TURNO.keys()), horizontal=True)
             horario_n = st.radio("Horário", OPCOES_POR_TURNO[turno_n], horizontal=True)
 
-            if st.button("🚀 Gravar Agendamentos", use_container_width=True, type="primary"):
-                if not prof_n or not disc_n or not datas_finais:
-                    st.warning("Preencha todos os campos.")
+            st.markdown("---")
+            col_check, col_save = st.columns(2)
+
+            # Botão de Verificar Disponibilidade
+            if col_check.button("🔍 Verificar Disponibilidade", use_container_width=True):
+                if not datas_finais:
+                    st.warning("Selecione ao menos uma data.")
                 else:
                     conflitos = []
-                    for data_alvo in datas_finais:
-                        check = df_db[(df_db['Laboratorio'] == lab_n) & 
-                                      (df_db['Data'] == data_alvo) & 
-                                      (df_db['Horario'] == horario_n)]
+                    for d in datas_finais:
+                        check = df_db[(df_db['Laboratorio'] == lab_n) & (df_db['Data'] == d) & (df_db['Horario'] == horario_n)]
                         if not check.empty:
-                            conflitos.append(f"{data_alvo.strftime('%d/%m')} ({check['Professor'].iloc[0]})")
+                            conflitos.append(f"{d.strftime('%d/%m')} (Ocupado por: {check['Professor'].iloc[0]})")
                     
                     if conflitos:
-                        st.error(f"❌ CONFLITO! O {lab_n} já está ocupado em: {', '.join(conflitos)}. Nada foi gravado.")
+                        st.error(f"❌ Indisponível nas seguintes datas: {', '.join(conflitos)}")
+                    else:
+                        st.success(f"✅ O {lab_n} está livre em todas as {len(datas_finais)} datas selecionadas para o horário {horario_n}!")
+
+            # Botão de Gravar Agendamentos (com trava interna também por segurança)
+            if col_save.button("🚀 Gravar Agendamentos", use_container_width=True, type="primary"):
+                if not prof_n or not disc_n or not datas_finais:
+                    st.warning("Preencha Professor, Disciplina e as Datas.")
+                else:
+                    conflitos = []
+                    for d in datas_finais:
+                        check = df_db[(df_db['Laboratorio'] == lab_n) & (df_db['Data'] == d) & (df_db['Horario'] == horario_n)]
+                        if not check.empty:
+                            conflitos.append(d.strftime('%d/%m'))
+                    
+                    if conflitos:
+                        st.error(f"❌ Não foi possível gravar. Conflito detectado em: {', '.join(conflitos)}")
                     else:
                         novos = pd.DataFrame([{"Professor": prof_n, "Disciplina": disc_n, "Laboratorio": lab_n, "Data": d, "Turno": turno_n, "Horario": horario_n} for d in datas_finais])
                         conn.update(data=pd.concat([df_db, novos], ignore_index=True))
-                        st.success(f"✅ Agendamentos realizados!"); st.rerun()
+                        st.success("✅ Agendamentos realizados com sucesso!"); st.rerun()
 
         with tab_del:
             df_del = carregar_dados()
