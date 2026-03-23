@@ -3,7 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, timedelta
 
-# --- CONFIGURAÇÕES DE ENGENHARIA DO CTI ---
+# --- CONFIGURAÇÕES DO CTI ---
 LABS = ["Automação", "Química", "Desenho", "Predial", "Hidráulica", 
         "Civil", "Maquete", "Eletrônica", "Física", "Mecânica"]
 
@@ -14,47 +14,48 @@ TURNOS_PADRAO = {
 }
 
 # Configuração da Interface
-st.set_page_config(page_title="Gestão de Labs CTI", layout="wide")
+st.set_page_config(page_title="Gestão de Labs CTI", layout="wide", page_icon="📅")
 st.title("📅 Sistema de Gestão de Laboratórios - CTI")
 
 # --- CONEXÃO COM GOOGLE SHEETS ---
+# O Streamlit busca automaticamente as credenciais em [connections.gsheets] no seu Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
     try:
-        # Tenta ler os dados. Se a planilha estiver vazia ou link errado, cairá no except.
+        # ttl=0 garante que ele busque sempre o dado mais novo da planilha
         data = conn.read(ttl=0)
         if data is None or data.empty:
             return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario", "Semanas"])
         return data
     except Exception as e:
-        # Retorna estrutura vazia para não quebrar a interface do App
+        # Se a planilha estiver vazia ou inacessível, retorna estrutura padrão
         return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario", "Semanas"])
 
 # --- INTERFACE DE NAVEGAÇÃO ---
 aba_reserva, aba_agenda = st.tabs(["🆕 Novo Agendamento", "📋 Visualizar Agenda"])
 
-# --- ABA 1: RESERVA AUTOMÁTICA (RECORRENTE) ---
+# --- ABA 1: NOVO AGENDAMENTO (RECORRENTE) ---
 with aba_reserva:
     with st.form("form_agendamento"):
-        st.subheader("Configurar Reserva Recorrente")
+        st.subheader("Configurar Reserva")
         col1, col2, col3 = st.columns(3)
         
         with col1:
             prof = st.text_input("Nome do Professor")
             lab = st.selectbox("Selecionar Laboratório", LABS)
         with col2:
-            data_ini = st.date_input("Data da Primeira Aula", datetime.now())
-            turno = st.selectbox("Turno Padrão", list(TURNOS_PADRAO.keys()))
+            data_ini = st.date_input("Data de Início", datetime.now())
+            turno = st.selectbox("Turno", list(TURNOS_PADRAO.keys()))
         with col3:
-            horario_custom = st.text_input("Horário Específico", value=TURNOS_PADRAO[turno])
+            horario_custom = st.text_input("Horário", value=TURNOS_PADRAO[turno])
             qtd_semanas = st.number_input("Repetir por quantas semanas?", min_value=1, max_value=20, value=1)
         
-        submit = st.form_submit_button("Gerar e Salvar no Banco de Dados")
+        submit = st.form_submit_button("Salvar Agendamento")
 
     if submit:
         if not prof:
-            st.error("Por favor, insira o nome do professor.")
+            st.error("Por favor, preencha o nome do professor.")
         else:
             novos_dados = []
             for i in range(qtd_semanas):
@@ -68,48 +69,51 @@ with aba_reserva:
                     "Semanas": i + 1
                 })
             
-            # Processo de Salvamento
             df_atual = carregar_dados()
             df_novo = pd.DataFrame(novos_dados)
             df_final = pd.concat([df_atual, df_novo], ignore_index=True)
             
             try:
+                # O comando update exige que a Service Account seja "Editor" na planilha
                 conn.update(data=df_final)
-                st.success(f"✅ Sucesso! {qtd_semanas} agendamentos criados para o Lab {lab}.")
+                st.success(f"✅ {qtd_semanas} reserva(s) realizada(s) com sucesso!")
                 st.balloons()
             except Exception as e:
-                st.error(f"Erro ao salvar na planilha. Verifique se ela está como 'Editor'. Detalhe: {e}")
+                st.error(f"Erro ao salvar: {e}")
 
-# --- ABA 2: VISUALIZAÇÃO POR DIA (AGENDA) ---
+# --- ABA 2: VISUALIZAÇÃO DA AGENDA ---
 with aba_agenda:
-    st.subheader("Consulta de Ocupação por Data")
-    df_visualizacao = carregar_dados()
+    st.subheader("Ocupação dos Laboratórios")
+    df_raw = carregar_dados()
     
-    # Filtro de Laboratórios para limpar a visão
-    filtro_lab = st.multiselect("Filtrar Laboratórios na Visualização", LABS, default=LABS)
+    filtro_lab = st.multiselect("Filtrar por Laboratório", LABS, default=LABS)
     
-    if not df_visualizacao.empty:
-        # Garantir que a coluna Data é tratada como data real
-        df_visualizacao['Data'] = pd.to_datetime(df_visualizacao['Data'])
+    if not df_raw.empty:
+        # BLINDAGEM CONTRA ERROS DE DATA:
+        # errors='coerce' transforma textos inválidos em NaT (Not a Time)
+        df_raw['Data'] = pd.to_datetime(df_raw['Data'], errors='coerce')
         
-        # Ordenar datas únicas para criar os expansores
-        datas_disponiveis = sorted(df_visualizacao['Data'].unique())
+        # Remove linhas onde a data é inválida ou vazia
+        df_view = df_raw.dropna(subset=['Data']).copy()
+        
+        # Ordenar datas
+        datas_disponiveis = sorted(df_view['Data'].unique())
+        
+        if not datas_disponiveis:
+            st.warning("Nenhum agendamento com data válida foi encontrado.")
         
         for data_dt in datas_disponiveis:
-            # Filtrar apenas o que o usuário quer ver (Labs selecionados)
-            df_dia = df_visualizacao[
-                (df_visualizacao['Data'] == data_dt) & 
-                (df_visualizacao['Laboratorio'].isin(filtro_lab))
+            df_dia = df_view[
+                (df_view['Data'] == data_dt) & 
+                (df_view['Laboratorio'].isin(filtro_lab))
             ]
             
             if not df_dia.empty:
-                # Criar um "card" expansível para cada dia
+                # Formata a data para o padrão brasileiro no título do card
                 label_dia = f"📅 {data_dt.strftime('%d/%m/%Y')} - {data_dt.strftime('%A')}"
                 with st.expander(label_dia):
-                    st.dataframe(
-                        df_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"),
-                        use_container_width=True,
-                        hide_index=True
+                    st.table(
+                        df_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario")
                     )
     else:
-        st.info("Nenhum agendamento encontrado. Vá na aba 'Novo Agendamento' para começar.")
+        st.info("A agenda está vazia.")
