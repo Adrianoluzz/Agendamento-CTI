@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 # --- 1. CONFIGURAÇÕES E ESTILO ---
 st.set_page_config(page_title="Sistema CTI", layout="wide", page_icon="📅")
 
-# CSS: Esconde Header (link do código) e a SETA de fechar a barra lateral
+# CSS: Customização das cores e remoção da seta lateral
 hide_elements_style = """
     <style>
     header[data-testid="stHeader"] { visibility: hidden; height: 0px; }
@@ -14,14 +14,17 @@ hide_elements_style = """
     footer {visibility: hidden;}
     .block-container { padding-top: 1rem !important; }
     
-    /* Estilo para destacar o cabeçalho das semanas */
+    /* ESTILO DA TARJA DA SEMANA (AZUL COM TEXTO BRANCO) */
     .semana-header {
-        background-color: #f0f2f6;
-        padding: 5px 15px;
-        border-radius: 5px;
-        border-left: 5px solid #007bff;
-        margin-top: 10px;
+        background-color: #004a99; /* Azul escuro profissional */
+        color: white !important;    /* Texto branco */
+        padding: 8px 20px;
+        border-radius: 8px;
+        margin-top: 25px;
         margin-bottom: 10px;
+        font-weight: bold;
+        font-size: 1.1rem;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
     }
     </style>
 """
@@ -82,7 +85,7 @@ if pagina == "📅 Consulta de Agenda":
     
     col_f1, col_f2 = st.columns(2)
     with col_f1: f_labs = st.multiselect("Filtrar Lab", LABS, default=LABS)
-    with col_f2: v_hist = st.checkbox("Ver passados")
+    with col_f2: v_hist = st.checkbox("Ver agendamentos passados")
 
     if not df_raw.empty:
         df_raw['Data'] = pd.to_datetime(df_raw['Data'], errors='coerce')
@@ -91,7 +94,6 @@ if pagina == "📅 Consulta de Agenda":
         df_view = df_view[df_view['Laboratorio'].isin(f_labs)].sort_values(by="Data")
 
         if not df_view.empty:
-            # Criando colunas auxiliares para agrupamento
             df_view['Mes_Ano'] = df_view['Data'].dt.strftime('%B %Y')
             df_view['Semana'] = df_view['Data'].dt.isocalendar().week
 
@@ -102,15 +104,13 @@ if pagina == "📅 Consulta de Agenda":
                 
                 df_mes = df_view[df_view['Mes_Ano'] == m_en]
                 
-                # Agrupando por semana dentro do mês
                 for sem_num in sorted(df_mes['Semana'].unique()):
                     df_semana = df_mes[df_mes['Semana'] == sem_num]
-                    
-                    # Cálculo do intervalo da semana (Segunda a Domingo)
                     inicio_sem = df_semana['Data'].min().strftime('%d/%m')
                     fim_sem = df_semana['Data'].max().strftime('%d/%m')
                     
-                    st.markdown(f'<div class="semana-header"><b>Semana {sem_num}</b> ({inicio_sem} a {fim_sem})</div>', unsafe_allow_html=True)
+                    # APLICANDO A TARJA COLORIDA
+                    st.markdown(f'<div class="semana-header">Semana {sem_num} ({inicio_sem} a {fim_sem})</div>', unsafe_allow_html=True)
                     
                     for d_dt in sorted(df_semana['Data'].unique()):
                         df_dia = df_semana[df_semana['Data'] == d_dt]
@@ -159,4 +159,4 @@ elif pagina == "🔐 Administração":
                     novos = [{"Professor": prof_n, "Laboratorio": lab_n, "Data": d.strftime('%Y-%m-%d'), "Turno": turno_n, "Horario": horario_n} for d in datas_finais]
                     conn.update(data=pd.concat([df_at, pd.DataFrame(novos)], ignore_index=True))
                     st.success("Salvo com sucesso!"); st.balloons()
-    else: st.info("Digite a senha na barra lateral.")
+    else: st.info("Digite a senha administrativa na barra lateral.")
