@@ -3,7 +3,21 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, timedelta
 
-# --- 1. CONFIGURAÇÕES ---
+# --- 1. CONFIGURAÇÕES E ESTILIZAÇÃO ---
+st.set_page_config(page_title="Sistema de Laboratórios CTI", layout="wide", page_icon="📅")
+
+# CSS para esconder o botão de código (ícone do GitHub/View Source) e o menu do Streamlit
+hide_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stAppDeployButton {display:none;}
+    [data-testid="stActionButtonIcon"] {display: none;}
+    </style>
+"""
+st.markdown(hide_style, unsafe_allow_html=True)
+
 LABS = ["Automação", "Química", "Desenho", "Predial", "Hidráulica", 
         "Civil", "Maquete", "Eletrônica", "Física", "Mecânica"]
 
@@ -18,8 +32,6 @@ DIAS_PT = {'Monday': 'Segunda-feira', 'Tuesday': 'Terça-feira', 'Wednesday': 'Q
 
 # DEFINA SUA SENHA AQUI
 SENHA_ADMIN = "cti123" 
-
-st.set_page_config(page_title="Sistema de Laboratórios CTI", layout="wide", page_icon="📅")
 
 # --- 2. CONEXÃO ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -87,8 +99,6 @@ if pagina == "📅 Consulta de Agenda":
 
 elif pagina == "🔐 Administração":
     st.title("🔐 Painel Administrativo")
-    
-    # Validação de Senha
     senha_input = st.sidebar.text_input("Digite a senha de Admin:", type="password")
     
     if senha_input == SENHA_ADMIN:
