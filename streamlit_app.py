@@ -37,9 +37,12 @@ hide_elements_style = """
 """
 st.markdown(hide_elements_style, unsafe_allow_html=True)
 
-# --- CONFIGURAÇÕES TÉCNICAS ---
-LABS = ["Automação", "Química", "Desenho", "Predial", "Hidráulica", 
-        "Civil", "Maquete", "Eletrônica", "Física", "Mecânica"]
+# --- CONFIGURAÇÕES TÉCNICAS (SALA DE TOPOGRAFIA ADICIONADA) ---
+LABS = sorted([
+    "Automação", "Química", "Desenho", "Predial", "Hidráulica", 
+    "Civil", "Maquete", "Eletrônica", "Física", "Mecânica", 
+    "Equipamentos Topografia"
+])
 
 OPCOES_POR_TURNO = {
     "Matutino": ["08:00 - 11:00 (Completo)", "08:00 - 09:30 (1º Horário)", "09:45 - 11:00 (2º Horário)"],
@@ -146,14 +149,12 @@ elif pagina == "🔐 Administração":
             turno_n = st.radio("Turno", list(OPCOES_POR_TURNO.keys()), horizontal=True)
             horario_n = st.radio("Horário", OPCOES_POR_TURNO[turno_n], horizontal=True)
 
-            # --- VALIDADOR DE CONFLITOS ANTES DE GRAVAR ---
             if st.button("🚀 Gravar Agendamentos", use_container_width=True, type="primary"):
                 if not prof_n or not disc_n or not datas_finais:
                     st.warning("Preencha todos os campos.")
                 else:
                     conflitos = []
                     for data_alvo in datas_finais:
-                        # Checa se já existe agendamento no mesmo LAB, DATA e HORÁRIO
                         check = df_db[(df_db['Laboratorio'] == lab_n) & 
                                       (df_db['Data'] == data_alvo) & 
                                       (df_db['Horario'] == horario_n)]
@@ -165,7 +166,7 @@ elif pagina == "🔐 Administração":
                     else:
                         novos = pd.DataFrame([{"Professor": prof_n, "Disciplina": disc_n, "Laboratorio": lab_n, "Data": d, "Turno": turno_n, "Horario": horario_n} for d in datas_finais])
                         conn.update(data=pd.concat([df_db, novos], ignore_index=True))
-                        st.success(f"✅ {len(datas_finais)} agendamentos realizados!"); st.rerun()
+                        st.success(f"✅ Agendamentos realizados!"); st.rerun()
 
         with tab_del:
             df_del = carregar_dados()
