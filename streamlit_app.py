@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 # --- 1. CONFIGURAÇÕES E ESTILO ---
 st.set_page_config(page_title="Sistema CTI", layout="wide", page_icon="📅")
 
-# CSS: Customização das cores, tarjas e remoção da seta lateral
 hide_elements_style = """
     <style>
     header[data-testid="stHeader"] { visibility: hidden; height: 0px; }
@@ -14,7 +13,6 @@ hide_elements_style = """
     footer {visibility: hidden;}
     .block-container { padding-top: 1rem !important; }
     
-    /* ESTILO DA TARJA DA SEMANA */
     .semana-header {
         background-color: #004a99;
         color: white !important;
@@ -26,7 +24,6 @@ hide_elements_style = """
         font-size: 1.1rem;
     }
     
-    /* Estilo para dias sem agendamento */
     .dia-vazio {
         color: #888;
         font-style: italic;
@@ -64,7 +61,7 @@ def carregar_dados():
     except:
         return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario"])
 
-# --- 3. BARRA LATERAL ---
+# --- 3. BARRA LATERAL (FIXA) ---
 with st.sidebar:
     st.title("📌 Sistema CTI")
     pagina = st.radio("Navegação:", ["📅 Consulta de Agenda", "🔐 Administração"])
@@ -83,11 +80,14 @@ if pagina == "📅 Consulta de Agenda":
     with col_f2: 
         dias_a_frente = st.slider("Mostrar próximos quantos dias?", 7, 90, 30)
 
-    # Gerar intervalo de datas completo (Hoje até X dias a frente)
+    # Gerar intervalo de datas FILTRANDO OS DOMINGOS
     hoje = datetime.now().date()
-    intervalo_datas = [hoje + timedelta(days=i) for i in range(dias_a_frente)]
+    intervalo_datas = []
+    for i in range(dias_a_frente):
+        d = hoje + timedelta(days=i)
+        if d.weekday() != 6:  # 6 é Domingo no Python (0=Segunda)
+            intervalo_datas.append(d)
     
-    # Criar um DataFrame base com todas as datas para garantir que todas apareçam
     df_calendario = pd.DataFrame({'Data': intervalo_datas})
     df_calendario['Mes_Ano'] = pd.to_datetime(df_calendario['Data']).dt.strftime('%B %Y')
     df_calendario['Semana'] = pd.to_datetime(df_calendario['Data']).dt.isocalendar().week
@@ -110,7 +110,6 @@ if pagina == "📅 Consulta de Agenda":
                 d_s = d_dt.strftime('%d/%m/%Y')
                 s_pt = DIAS_PT.get(d_dt.strftime('%A'))
                 
-                # Filtrar agendamentos reais para este dia e laboratórios selecionados
                 agendamentos_dia = df_raw[(df_raw['Data'] == d_dt) & (df_raw['Laboratorio'].isin(f_labs))]
                 
                 with st.expander(f"{d_s} ({s_pt})"):
@@ -136,8 +135,11 @@ elif pagina == "🔐 Administração":
                 qtd = st.number_input("Total aulas", min_value=1, value=1)
                 freq = st.selectbox("Frequência", ["Semanal", "Quinzenal"])
             with cb:
-                extras = st.multiselect("Extras:", pd.date_range(start=datetime.now(), periods=90).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
-            for i in range(qtd): datas_finais.append(d_ini + timedelta(weeks=i * (2 if freq == "Quinzenal" else 1)))
+                extras = st.multiselect("Extras (ex: Sábados):", pd.date_range(start=datetime.now(), periods=90).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
+            for i in range(qtd):
+                data_calculada = d_ini + timedelta(weeks=i * (2 if freq == "Quinzenal" else 1))
+                if data_calculada.weekday() != 6: # Evita agendar domingo por engano na recorrência
+                    datas_finais.append(data_calculada)
             datas_finais.extend(extras)
         else:
             datas_finais = st.multiselect("Datas:", pd.date_range(start=datetime.now(), periods=120).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
@@ -149,10 +151,11 @@ elif pagina == "🔐 Administração":
         if st.button("🚀 Gravar Agendamentos", use_container_width=True, type="primary"):
             if not prof_n or not datas_finais: st.warning("Preencha os campos.")
             else:
-                # Lógica simplificada de gravação (mantendo a mesma das versões anteriores)
                 df_at = carregar_dados()
-                # (Aqui entraria a função analisar_disponibilidade se necessário)
                 novos = [{"Professor": prof_n, "Laboratorio": lab_n, "Data": d.strftime('%Y-%m-%d'), "Turno": turno_n, "Horario": horario_n} for d in datas_finais]
-                conn.update(data=pd.concat([df_at, pd.DataFrame(novos)], ignore_index=True))
-                st.success("Salvo!"); st.balloons()
-    else: st.info("Digite a senha na barra lateral.")
+                try:
+                    conn.update(data=pd.concat([df_at, pd.DataFrame(novos)], ignore_index=True))
+                    st.success("Salvo com sucesso!"); st.balloons()
+                except Exception as e:
+                    st.error(f"Erro ao salvar: {e}")
+    else: st.info("Digite a senha administrativa na barra lateral.")
