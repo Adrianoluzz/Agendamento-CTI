@@ -70,7 +70,7 @@ def carregar_dados():
     except:
         return pd.DataFrame(columns=["Professor", "Disciplina", "Laboratorio", "Data", "Turno", "Horario"])
 
-# --- 3. LÓGICA DE SEMESTRE ---
+# --- 3. LÓGICA DE DATA ---
 hoje = datetime.now().date()
 ano_atual = hoje.year
 fim_periodo = datetime(ano_atual, 6, 30).date() if hoje <= datetime(ano_atual, 6, 30).date() else datetime(ano_atual, 12, 31).date()
@@ -132,59 +132,63 @@ elif pagina == "🔐 Administração":
         with tab_add:
             df_db = carregar_dados()
             c1, c2 = st.columns(2)
-            prof_n = c1.text_input("Professor")
-            disc_n = c2.text_input("Disciplina")
-            lab_n = st.selectbox("Laboratório", LABS)
-            modo = st.selectbox("Modo", ["Recorrência Semanal", "Datas Específicas"])
+            prof_n = c1.text_input("Nome do Professor")
+            disc_n = c2.text_input("Nome da Disciplina")
+            lab_n = st.selectbox("Selecione o Laboratório", LABS)
+            modo = st.selectbox("Modo de Agendamento", ["Recorrência Semanal", "Datas Específicas"])
             
             datas_finais = []
             if modo == "Recorrência Semanal":
                 ca, cb = st.columns(2)
-                d_ini = ca.date_input("Início", hoje, min_value=hoje, max_value=fim_periodo)
-                qtd = cb.number_input("Semanas", 1, 22, 1)
+                d_ini = ca.date_input("Data de Início", hoje, min_value=hoje, max_value=fim_periodo)
+                qtd = cb.number_input("Número de Semanas (Repetição)", 1, 22, 1)
                 datas_finais = [d_ini + timedelta(weeks=i) for i in range(qtd) if (d_ini + timedelta(weeks=i)) <= fim_periodo and (d_ini + timedelta(weeks=i)).weekday() != 6]
             else:
-                datas_finais = st.multiselect("Datas:", pd.date_range(hoje, fim_periodo).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
+                datas_finais = st.multiselect("Selecione as Datas:", pd.date_range(hoje, fim_periodo).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
 
             turno_n = st.radio("Turno", list(OPCOES_POR_TURNO.keys()), horizontal=True)
-            horario_n = st.radio("Horário", OPCOES_POR_TURNO[turno_n], horizontal=True)
+            horario_n = st.radio("Horário Específico", OPCOES_POR_TURNO[turno_n], horizontal=True)
 
-            st.markdown("---")
-            col_check, col_save = st.columns(2)
+            st.markdown("### 🛠️ Ações de Agendamento")
+            
+            # Criando colunas para os botões ficarem evidentes
+            col_botoes = st.columns([1, 1, 2]) 
+            
+            # --- BOTÃO DE VERIFICAR (COLUNA 1) ---
+            btn_verificar = col_botoes[0].button("🔍 Verificar", use_container_width=True)
+            
+            # --- BOTÃO DE GRAVAR (COLUNA 2) ---
+            btn_gravar = col_botoes[1].button("🚀 Gravar", type="primary", use_container_width=True)
 
-            # Botão de Verificar Disponibilidade
-            if col_check.button("🔍 Verificar Disponibilidade", use_container_width=True):
+            if btn_verificar:
                 if not datas_finais:
-                    st.warning("Selecione ao menos uma data.")
+                    st.warning("⚠️ Selecione as datas primeiro.")
                 else:
                     conflitos = []
                     for d in datas_finais:
                         check = df_db[(df_db['Laboratorio'] == lab_n) & (df_db['Data'] == d) & (df_db['Horario'] == horario_n)]
                         if not check.empty:
-                            conflitos.append(f"{d.strftime('%d/%m')} (Ocupado por: {check['Professor'].iloc[0]})")
+                            conflitos.append(f"{d.strftime('%d/%m')} ({check['Professor'].iloc[0]})")
                     
                     if conflitos:
-                        st.error(f"❌ Indisponível nas seguintes datas: {', '.join(conflitos)}")
+                        st.error(f"❌ INDISPONÍVEL! Conflito em: {', '.join(conflitos)}")
                     else:
-                        st.success(f"✅ O {lab_n} está livre em todas as {len(datas_finais)} datas selecionadas para o horário {horario_n}!")
+                        st.success(f"✅ DISPONÍVEL! O {lab_n} está livre para todas as {len(datas_finais)} datas.")
 
-            # Botão de Gravar Agendamentos (com trava interna também por segurança)
-            if col_save.button("🚀 Gravar Agendamentos", use_container_width=True, type="primary"):
+            if btn_gravar:
                 if not prof_n or not disc_n or not datas_finais:
-                    st.warning("Preencha Professor, Disciplina e as Datas.")
+                    st.error("⚠️ Por favor, preencha Professor, Disciplina e as Datas.")
                 else:
-                    conflitos = []
-                    for d in datas_finais:
-                        check = df_db[(df_db['Laboratorio'] == lab_n) & (df_db['Data'] == d) & (df_db['Horario'] == horario_n)]
-                        if not check.empty:
-                            conflitos.append(d.strftime('%d/%m'))
+                    # Checagem de segurança final antes de subir
+                    conflitos_final = [d for d in datas_finais if not df_db[(df_db['Laboratorio'] == lab_n) & (df_db['Data'] == d) & (df_db['Horario'] == horario_n)].empty]
                     
-                    if conflitos:
-                        st.error(f"❌ Não foi possível gravar. Conflito detectado em: {', '.join(conflitos)}")
+                    if conflitos_final:
+                        st.error("❌ Erro: Uma das datas já foi ocupada enquanto você preenchia. Verifique novamente.")
                     else:
                         novos = pd.DataFrame([{"Professor": prof_n, "Disciplina": disc_n, "Laboratorio": lab_n, "Data": d, "Turno": turno_n, "Horario": horario_n} for d in datas_finais])
                         conn.update(data=pd.concat([df_db, novos], ignore_index=True))
-                        st.success("✅ Agendamentos realizados com sucesso!"); st.rerun()
+                        st.success("🎉 Agendamento concluído com sucesso!")
+                        st.rerun()
 
         with tab_del:
             df_del = carregar_dados()
@@ -193,9 +197,9 @@ elif pagina == "🔐 Administração":
                 df_f = df_del if f_p == "Todos" else df_del[df_del['Professor'] == f_p]
                 df_f['Selecionar'] = False
                 edited = st.data_editor(df_f, hide_index=True, use_container_width=True)
-                if st.button("Confirmar Exclusão"):
+                if st.button("🗑️ Confirmar Exclusão Selecionada"):
                     indices = edited[edited['Selecionar'] == False].index
                     conn.update(data=df_del.loc[indices].drop(columns=['Selecionar'], errors='ignore'))
-                    st.warning("Removido!"); st.rerun()
+                    st.warning("⚠️ Itens removidos!"); st.rerun()
     else:
-        st.info("Insira a senha.")
+        st.info("🔒 Por favor, insira a senha administrativa na barra lateral.")
