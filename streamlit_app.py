@@ -6,13 +6,14 @@ from datetime import datetime, timedelta
 # --- 1. CONFIGURAÇÕES E ESTILIZAÇÃO ---
 st.set_page_config(page_title="Sistema de Laboratórios CTI", layout="wide", page_icon="📅")
 
-# CSS para esconder o botão de código (ícone do GitHub/View Source) e o menu do Streamlit
+# CSS AJUSTADO: Esconde o "View Source" e o Menu, mas mantém a seta da barra lateral
 hide_style = """
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     .stAppDeployButton {display:none;}
+    /* Esconde o ícone de código/GitHub mas mantém a funcionalidade de navegação */
     [data-testid="stActionButtonIcon"] {display: none;}
     </style>
 """
