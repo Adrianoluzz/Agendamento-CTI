@@ -3,13 +3,13 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, timedelta
 
-# --- 1. CONFIGURAÇÕES TÉCNICAS DO CTI ---
+# --- 1. CONFIGURAÇÕES DO CTI ---
 LABS = [
     "Automação", "Química", "Desenho", "Predial", "Hidráulica", 
     "Civil", "Maquete", "Eletrônica", "Física", "Mecânica"
 ]
 
-# Grade de horários oficial conforme sua especificação
+# Grade de horários oficial vinculada aos turnos
 OPCOES_POR_TURNO = {
     "Matutino": [
         "08:00 - 11:00 (Completo)", 
@@ -30,54 +30,56 @@ OPCOES_POR_TURNO = {
 st.set_page_config(page_title="Gestão de Labs CTI", layout="wide", page_icon="📅")
 st.title("📅 Sistema de Gestão de Laboratórios - CTI")
 
-# --- 2. FUNÇÕES DE CONEXÃO (GOOGLE SHEETS) ---
+# --- 2. CONEXÃO COM GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
     try:
-        # ttl=0 força a atualização em tempo real sem cache
+        # ttl=0 evita que o Streamlit use dados antigos do cache
         data = conn.read(ttl=0)
         if data is None or data.empty:
             return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario", "Semanas"])
         return data
     except Exception:
-        # Retorna DataFrame vazio se houver erro na leitura ou planilha inexistente
         return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario", "Semanas"])
 
 # --- 3. INTERFACE DE NAVEGAÇÃO ---
 aba_reserva, aba_agenda = st.tabs(["🆕 Novo Agendamento", "📋 Visualizar Agenda"])
 
-# --- ABA 1: FORMULÁRIO DE RESERVA ---
+# --- ABA 1: FORMULÁRIO DE RESERVA (COM ATUALIZAÇÃO EM TEMPO REAL) ---
 with aba_reserva:
-    with st.form("form_agendamento"):
-        st.subheader("Cadastrar Nova Reserva")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            prof = st.text_input("Nome do Professor")
-            lab = st.selectbox("Selecionar Laboratório", LABS)
-        
-        with col2:
-            data_ini = st.date_input("Data de Início", datetime.now())
-            turno_sel = st.selectbox("Turno", list(OPCOES_POR_TURNO.keys()))
-        
-        with col3:
-            # Lista dinâmica baseada no turno selecionado
-            lista_h = OPCOES_POR_TURNO[turno_sel] + ["Outro (Personalizado)"]
-            horario_sel = st.selectbox("Horário de Aula", lista_h)
-            
-            if horario_sel == "Outro (Personalizado)":
-                horario_final = st.text_input("Digite o horário (ex: 10:00 - 11:30)")
-            else:
-                horario_final = horario_sel
-                
-            qtd_semanas = st.number_input("Repetir por quantas semanas?", min_value=1, max_value=20, value=1)
-        
-        submit = st.form_submit_button("Confirmar e Salvar")
+    st.subheader("Configurar Nova Reserva")
+    
+    # Criamos colunas para organizar os pontos de seleção
+    col1, col2, col3 = st.columns([1, 1, 1.2])
+    
+    with col1:
+        prof = st.text_input("Nome do Professor", placeholder="Digite o nome...")
+        lab = st.selectbox("Selecionar Laboratório", LABS)
+        data_ini = st.date_input("Data de Início", datetime.now())
 
-    if submit:
-        if not prof or not horario_final:
-            st.error("⚠️ Por favor, preencha todos os campos obrigatórios.")
+    with col2:
+        # PONTOS DE SELEÇÃO PARA O TURNO
+        turno_sel = st.radio(
+            "Selecione o Turno:", 
+            list(OPCOES_POR_TURNO.keys()),
+            help="Clique para atualizar os horários ao lado."
+        )
+
+    with col3:
+        # PONTOS DE SELEÇÃO PARA O HORÁRIO (Atualiza baseado no turno_sel)
+        horario_sel = st.radio(
+            "Selecione o Horário de Aula:", 
+            OPCOES_POR_TURNO[turno_sel]
+        )
+        
+        st.markdown("---")
+        qtd_semanas = st.number_input("Repetir por quantas semanas?", min_value=1, max_value=20, value=1)
+
+    # Botão de ação principal
+    if st.button("🚀 Confirmar e Salvar Agendamento", use_container_width=True, type="primary"):
+        if not prof:
+            st.warning("⚠️ Por favor, insira o nome do professor antes de salvar.")
         else:
             novos_registros = []
             for i in range(qtd_semanas):
@@ -87,40 +89,40 @@ with aba_reserva:
                     "Laboratorio": lab,
                     "Data": data_aula.strftime('%Y-%m-%d'),
                     "Turno": turno_sel,
-                    "Horario": horario_final,
+                    "Horario": horario_sel,
                     "Semanas": i + 1
                 })
             
-            df_atual = carregar_dados()
-            df_novo = pd.DataFrame(novos_registros)
-            df_final = pd.concat([df_atual, df_novo], ignore_index=True)
-            
-            try:
-                # O comando update sincroniza o DataFrame com a Google Sheets
-                conn.update(data=df_final)
-                st.success(f"✅ Sucesso! {qtd_semanas} agendamento(s) realizado(s).")
-                st.balloons()
-            except Exception as e:
-                st.error(f"❌ Erro de permissão: Verifique se a planilha está compartilhada com o e-mail da Service Account. Detalhe: {e}")
+            # Processo de salvamento
+            with st.spinner("Salvando na planilha..."):
+                df_atual = carregar_dados()
+                df_novo = pd.DataFrame(novos_registros)
+                df_final = pd.concat([df_atual, df_novo], ignore_index=True)
+                
+                try:
+                    conn.update(data=df_final)
+                    st.success(f"✅ Sucesso! {qtd_semanas} reserva(s) adicionada(s) à agenda.")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"Erro técnico ao salvar: {e}")
 
 # --- ABA 2: VISUALIZAÇÃO DA AGENDA ---
 with aba_agenda:
     st.subheader("Consulta de Ocupação")
     df_raw = carregar_dados()
     
-    # Filtro multiselect para facilitar a busca por lab específico
     filtro_lab = st.multiselect("Filtrar Laboratórios", LABS, default=LABS)
     
     if not df_raw.empty:
-        # Tratamento de data para evitar erros de visualização
+        # Tratamento de dados para garantir que a data seja lida corretamente
         df_raw['Data'] = pd.to_datetime(df_raw['Data'], errors='coerce')
         df_view = df_raw.dropna(subset=['Data']).copy()
         
-        # Ordenação cronológica
+        # Ordenação cronológica (do dia mais próximo para o mais distante)
         datas_disponiveis = sorted(df_view['Data'].unique())
         
         if not datas_disponiveis:
-            st.warning("Nenhum dado válido encontrado na planilha.")
+            st.info("Nenhum agendamento encontrado para os filtros selecionados.")
         
         for data_dt in datas_disponiveis:
             df_dia = df_view[
@@ -129,9 +131,9 @@ with aba_agenda:
             ]
             
             if not df_dia.empty:
-                # Título formatado: 📅 23/03/2026 - Monday
+                # Título do card formatado (Ex: 23/03/2026 - Monday)
                 label_dia = f"📅 {data_dt.strftime('%d/%m/%Y')} - {data_dt.strftime('%A')}"
                 with st.expander(label_dia):
                     st.table(df_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
     else:
-        st.info("ℹ️ A agenda está vazia no momento.")
+        st.info("ℹ️ A agenda está vazia. Realize um novo agendamento para visualizar os dados.")
