@@ -13,7 +13,6 @@ hide_elements_style = """
     footer {visibility: hidden;}
     .block-container { padding-top: 1rem !important; }
     
-    /* TARJA DA SEMANA */
     .semana-header {
         background-color: #004a99;
         color: white !important;
@@ -31,7 +30,6 @@ hide_elements_style = """
         padding: 5px 0px;
     }
     
-    /* Destaque para o nome do Mês */
     .mes-titulo {
         color: #004a99;
         border-bottom: 2px solid #004a99;
@@ -57,7 +55,7 @@ DIAS_PT = {'Monday': 'Segunda-feira', 'Tuesday': 'Terça-feira', 'Wednesday': 'Q
 
 SENHA_ADMIN = "cti123" 
 
-# --- 2. CONEXÃO ---
+# --- 2. CONEXÃO E DADOS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
@@ -70,72 +68,77 @@ def carregar_dados():
     except:
         return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario"])
 
-# --- 3. BARRA LATERAL ---
+# --- 3. LÓGICA DE SEMESTRE ---
+hoje = datetime.now().date()
+ano_atual = hoje.year
+
+# Define o fim do semestre atual
+if hoje <= datetime(ano_atual, 6, 30).date():
+    fim_periodo = datetime(ano_atual, 6, 30).date()
+    nome_semestre = f"{ano_atual}.1"
+else:
+    fim_periodo = datetime(ano_atual, 12, 31).date()
+    nome_semestre = f"{ano_atual}.2"
+
+# --- 4. BARRA LATERAL ---
 with st.sidebar:
     st.title("📌 Sistema CTI")
-    st.info("Planejamento Semestral (5 meses)")
+    st.success(f"📅 Semestre Ativo: {nome_semestre}")
     pagina = st.radio("Navegação:", ["📅 Consulta de Agenda", "🔐 Administração"])
     if pagina == "🔐 Administração":
         senha = st.text_input("Senha Admin:", type="password")
     else: senha = ""
 
-# --- 4. CONTEÚDO PRINCIPAL ---
+# --- 5. CONTEÚDO PRINCIPAL ---
 if pagina == "📅 Consulta de Agenda":
-    st.title("📋 Agenda de Laboratórios - Visão 5 Meses")
+    st.title(f"📋 Agenda de Laboratórios - Semestre {nome_semestre}")
     df_raw = carregar_dados()
     
     f_labs = st.multiselect("Filtrar por Laboratório", LABS, default=LABS)
 
-    # Lógica para 5 meses (aprox. 150 dias)
-    hoje = datetime.now().date()
-    # Calculamos o fim do período de 5 meses
-    qtd_dias = 150 
+    # Gera o intervalo exato do dia atual até o último dia do semestre
+    dias_restantes = (fim_periodo - hoje).days + 1
     
     intervalo_datas = []
-    for i in range(qtd_dias):
+    for i in range(dias_restantes):
         d = hoje + timedelta(days=i)
         if d.weekday() != 6:  # Pula Domingos
             intervalo_datas.append(d)
     
-    df_cal = pd.DataFrame({'Data': intervalo_datas})
-    df_cal['Mes_Ano'] = pd.to_datetime(df_cal['Data']).dt.strftime('%B %Y')
-    # Usamos uma combinação de Ano + Semana para o agrupamento não bugar na virada de ano
-    df_cal['Semana_ID'] = pd.to_datetime(df_cal['Data']).dt.strftime('%Y-%U') 
+    if not intervalo_datas:
+        st.info("O semestre atual encerrou. Aguarde o início do próximo período.")
+    else:
+        df_cal = pd.DataFrame({'Data': intervalo_datas})
+        df_cal['Mes_Ano'] = pd.to_datetime(df_cal['Data']).dt.strftime('%B %Y')
+        df_cal['Semana_ID'] = pd.to_datetime(df_cal['Data']).dt.strftime('%Y-%U') 
 
-    # Loop de Meses
-    for m_en in df_cal['Mes_Ano'].unique():
-        m_pt = m_en
-        for en, pt in MESES_PT.items(): m_pt = m_pt.replace(en, pt)
-        st.markdown(f'<h2 class="mes-titulo">📅 {m_pt}</h2>', unsafe_allow_html=True)
-        
-        df_mes = df_cal[df_cal['Mes_Ano'] == m_en]
-        
-        # Loop de Semanas dentro do Mês
-        for sem_id in df_mes['Semana_ID'].unique():
-            df_sem = df_mes[df_mes['Semana_ID'] == sem_id]
+        for m_en in df_cal['Mes_Ano'].unique():
+            m_pt = m_en
+            for en, pt in MESES_PT.items(): m_pt = m_pt.replace(en, pt)
+            st.markdown(f'<h2 class="mes-titulo">📅 {m_pt}</h2>', unsafe_allow_html=True)
             
-            # Formatação do cabeçalho da semana
-            inicio_sem = df_sem['Data'].min().strftime('%d/%m')
-            fim_sem = df_sem['Data'].max().strftime('%d/%m')
-            num_semana = pd.to_datetime(df_sem['Data'].min()).isocalendar()[1]
+            df_mes = df_cal[df_cal['Mes_Ano'] == m_en]
             
-            st.markdown(f'<div class="semana-header">Semana {num_semana} ({inicio_sem} a {fim_sem})</div>', unsafe_allow_html=True)
-            
-            # Mostrar os dias daquela semana
-            for d_dt in sorted(df_sem['Data'].unique()):
-                d_s = d_dt.strftime('%d/%m/%Y')
-                s_pt = DIAS_PT.get(d_dt.strftime('%A'))
+            for sem_id in df_mes['Semana_ID'].unique():
+                df_sem = df_mes[df_sem['Semana_ID'] == sem_id]
+                inicio_sem = df_sem['Data'].min().strftime('%d/%m')
+                fim_sem = df_sem['Data'].max().strftime('%d/%m')
+                num_semana = pd.to_datetime(df_sem['Data'].min()).isocalendar()[1]
                 
-                reserva_dia = df_raw[(df_raw['Data'] == d_dt) & (df_raw['Laboratorio'].isin(f_labs))]
+                st.markdown(f'<div class="semana-header">Semana {num_semana} ({inicio_sem} a {fim_sem})</div>', unsafe_allow_html=True)
                 
-                # Expander para cada dia
-                label_dia = f"{d_s} ({s_pt})"
-                if not reserva_dia.empty:
-                    with st.expander(f"🔵 {label_dia} - {len(reserva_dia)} reserva(s)"):
-                        st.table(reserva_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
-                else:
-                    with st.expander(f"⚪ {label_dia} - Disponível"):
-                        st.markdown('<p class="dia-vazio">Nenhum agendamento. Laboratórios liberados.</p>', unsafe_allow_html=True)
+                for d_dt in sorted(df_sem['Data'].unique()):
+                    d_s = d_dt.strftime('%d/%m/%Y')
+                    s_pt = DIAS_PT.get(d_dt.strftime('%A'))
+                    reserva_dia = df_raw[(df_raw['Data'] == d_dt) & (df_raw['Laboratorio'].isin(f_labs))]
+                    
+                    label_dia = f"{d_s} ({s_pt})"
+                    if not reserva_dia.empty:
+                        with st.expander(f"🔵 {label_dia} - {len(reserva_dia)} reserva(s)"):
+                            st.table(reserva_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
+                    else:
+                        with st.expander(f"⚪ {label_dia} - Disponível"):
+                            st.markdown('<p class="dia-vazio">Nenhum agendamento registrado.</p>', unsafe_allow_html=True)
 
 elif pagina == "🔐 Administração":
     st.title("🔐 Painel Administrativo")
@@ -147,35 +150,39 @@ elif pagina == "🔐 Administração":
         
         st.markdown("---")
         datas_finais = []
+        
+        # Limita o calendário de escolha ao fim do semestre atual para evitar erros
+        max_data_pick = fim_periodo
+        
         if modo == "Recorrência Semestral":
             ca, cb = st.columns(2)
             with ca:
-                d_ini = st.date_input("Data de Início", datetime.now().date())
-                qtd = st.number_input("Quantidade de semanas (ex: 20 para o semestre)", min_value=1, value=18)
+                d_ini = st.date_input("Início", hoje, min_value=hoje, max_value=max_data_pick)
+                # Calcula quantas semanas faltam para o fim do semestre
+                semanas_restantes = max(1, (max_data_pick - d_ini).days // 7)
+                qtd = st.number_input("Quantidade de semanas", min_value=1, max_value=semanas_restantes + 1, value=semanas_restantes)
             with cb:
                 freq = st.selectbox("Frequência", ["Semanal", "Quinzenal"])
-                extras = st.multiselect("Datas Extras (ex: Sábados letivos):", pd.date_range(start=datetime.now(), periods=180).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
+                extras = st.multiselect("Datas Extras:", pd.date_range(start=hoje, end=max_data_pick).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
             
             pulo = 2 if freq == "Quinzenal" else 1
             for i in range(qtd):
                 d_calc = d_ini + timedelta(weeks=i * pulo)
-                if d_calc.weekday() != 6: datas_finais.append(d_calc)
+                if d_calc <= max_data_pick and d_calc.weekday() != 6:
+                    datas_finais.append(d_calc)
             datas_finais.extend(extras)
         else:
-            datas_finais = st.multiselect("Selecione os dias:", pd.date_range(start=datetime.now(), periods=180).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
+            datas_finais = st.multiselect("Selecione os dias:", pd.date_range(start=hoje, end=max_data_pick).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
         
         datas_finais = sorted(list(set(datas_finais)))
         turno_n = st.radio("Turno", list(OPCOES_POR_TURNO.keys()), horizontal=True)
         horario_n = st.radio("Horário", OPCOES_POR_TURNO[turno_n], horizontal=True)
 
-        if st.button("🚀 Gravar Agendamentos Semestrais", use_container_width=True, type="primary"):
-            if not prof_n or not datas_finais: st.warning("Preencha o nome e selecione as datas.")
+        if st.button("🚀 Gravar Agendamentos", use_container_width=True, type="primary"):
+            if not prof_n or not datas_finais: st.warning("Preencha os campos obrigatórios.")
             else:
                 df_at = carregar_dados()
                 novos = [{"Professor": prof_n, "Laboratorio": lab_n, "Data": d.strftime('%Y-%m-%d'), "Turno": turno_n, "Horario": horario_n} for d in datas_finais]
-                try:
-                    conn.update(data=pd.concat([df_at, pd.DataFrame(novos)], ignore_index=True))
-                    st.success(f"✅ {len(datas_finais)} datas agendadas com sucesso!"); st.balloons()
-                except Exception as e:
-                    st.error(f"Erro ao salvar: {e}")
+                conn.update(data=pd.concat([df_at, pd.DataFrame(novos)], ignore_index=True))
+                st.success(f"✅ Agendamentos para o semestre {nome_semestre} gravados!"); st.balloons()
     else: st.info("Insira a senha na barra lateral.")
