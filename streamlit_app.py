@@ -2,8 +2,9 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, timedelta
+import dateutil.relativedelta as rd # Biblioteca padrão para lidar com meses/semanas complexos
 
-# --- 1. CONFIGURAÇÕES DO CTI ---
+# --- 1. CONFIGURAÇÕES ---
 LABS = ["Automação", "Química", "Desenho", "Predial", "Hidráulica", 
         "Civil", "Maquete", "Eletrônica", "Física", "Mecânica"]
 
@@ -19,7 +20,6 @@ DIAS_PT = {'Monday': 'Segunda-feira', 'Tuesday': 'Terça-feira', 'Wednesday': 'Q
 st.set_page_config(page_title="Gestão de Labs CTI", layout="wide", page_icon="📅")
 st.title("📅 Gestão de Laboratórios - CTI")
 
-# --- 2. CONEXÃO ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
@@ -31,8 +31,10 @@ def carregar_dados():
 
 def analisar_disponibilidade(df, lab, data, turno):
     df_temp = df.copy()
+    # Forçar a coluna Data a ser apenas o dia, sem horas
     df_temp['Data'] = pd.to_datetime(df_temp['Data'], errors='coerce').dt.date
     reservas = df_temp[(df_temp['Laboratorio'] == lab) & (df_temp['Data'] == data) & (df_temp['Turno'] == turno)]
+    
     status = {"1º": "Livre", "2º": "Livre", "Completo": "Livre"}
     for _, r in reservas.iterrows():
         h, prof = r['Horario'], r['Professor']
@@ -48,122 +50,110 @@ def analisar_disponibilidade(df, lab, data, turno):
             status["Completo"] = f"Agendamento (completo) indisponivel - Prof. {prof}"
     return status
 
-# --- 3. INTERFACE ---
+# --- INTERFACE ---
 aba_reserva, aba_agenda = st.tabs(["🆕 Novo Agendamento", "📋 Visualizar Agenda"])
 
 with aba_reserva:
-    st.subheader("Configurar Agendamento Múltiplo")
-    
+    st.subheader("Configurar Agendamento Inteligente")
     col1, col2, col3 = st.columns([1, 1, 1.2])
     
     with col1:
         prof = st.text_input("Nome do Professor")
         lab = st.selectbox("Selecionar Laboratório", LABS)
-        tipo_agenda = st.selectbox("Tipo de Agendamento", ["Apenas Dias Específicos", "Recorrência + Extras"])
+        tipo_agenda = st.selectbox("Tipo de Agendamento", ["Recorrência + Extras", "Apenas Dias Específicos"])
 
     with col2:
         turno_sel = st.radio("Selecione o Turno:", list(OPCOES_POR_TURNO.keys()))
         if tipo_agenda == "Recorrência + Extras":
-            freq = st.selectbox("Frequência da Recorrência", ["Semanal", "Quinzenal"])
+            freq = st.selectbox("Frequência", ["Semanal", "Quinzenal"])
 
     with col3:
         horario_sel = st.radio("Selecione o Horário:", OPCOES_POR_TURNO[turno_sel])
 
     st.markdown("---")
-    col_data1, col_data2 = st.columns(2)
-
+    
     datas_finais = []
+    c1, c2 = st.columns(2)
 
-    with col_data1:
+    with c1:
         if tipo_agenda == "Recorrência + Extras":
-            st.write("**Configurar Recorrência**")
-            d_ini = st.date_input("Data de Início da Série", datetime.now())
-            qtd = st.number_input("Número de semanas/quatorzenas:", min_value=1, max_value=20, value=1)
-            pulo = 2 if freq == "Quinzenal" else 1
+            st.write("**Série de Aulas**")
+            d_ini = st.date_input("Data de Início", datetime.now().date())
+            qtd = st.number_input("Total de aulas na série:", min_value=1, max_value=30, value=1)
+            
+            # LÓGICA DE CALENDÁRIO PRECISA
+            semanas_adicionar = 2 if freq == "Quinzenal" else 1
             for i in range(qtd):
-                datas_finais.append(d_ini + timedelta(weeks=i * pulo))
+                # Usamos semanas fixas que o Python converte corretamente para o dia do mês
+                nova_data = d_ini + timedelta(weeks=i * semanas_adicionar)
+                datas_finais.append(nova_data)
         else:
-            st.write("**Seleção Manual**")
-            datas_manuais = st.multiselect("Selecione os dias:", 
-                                           pd.date_range(start=datetime.now(), periods=120).date,
-                                           format_func=lambda x: x.strftime('%d/%m/%Y'))
+            datas_manuais = st.multiselect("Datas avulsas:", pd.date_range(start=datetime.now(), periods=180).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
             datas_finais.extend(datas_manuais)
 
-    with col_data2:
+    with c2:
         if tipo_agenda == "Recorrência + Extras":
-            st.write("**Adicionar Dias Extras (Opcional)**")
-            extras = st.multiselect("Selecione dias fora da recorrência:", 
-                                     pd.date_range(start=datetime.now(), periods=120).date,
-                                     format_func=lambda x: x.strftime('%d/%m/%Y'))
+            st.write("**Dias Adicionais (Ex: Sábados letivos)**")
+            extras = st.multiselect("Selecione dias extras:", pd.date_range(start=datetime.now(), periods=180).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
             datas_finais.extend(extras)
-            # Remover duplicatas caso o usuário selecione um dia que já cairia na recorrência
             datas_finais = sorted(list(set(datas_finais)))
 
     st.markdown("---")
     chave_busca = "Completo" if "Completo" in horario_sel else ("1º" if "1º" in horario_sel else "2º")
 
-    # BOTÃO VERIFICAR
-    if st.button("🔍 Verificar Tudo", use_container_width=True):
-        if not datas_finais:
-            st.warning("Nenhuma data selecionada.")
+    if st.button("🔍 Verificar Disponibilidade das Datas", use_container_width=True):
+        if not datas_finais: st.warning("Selecione as datas.")
         else:
             df_atual = carregar_dados()
             for d in datas_finais:
-                status = analisar_disponibilidade(df_atual, lab, d, turno_sel)
-                if status[chave_busca] == "Livre":
-                    st.success(f"✅ {d.strftime('%d/%m/%Y')}: Disponível")
+                st_dia = analisar_disponibilidade(df_atual, lab, d, turno_sel)
+                if st_dia[chave_busca] == "Livre":
+                    st.success(f"✅ {d.strftime('%d/%m/%Y')} ({DIAS_PT.get(d.strftime('%A'))}): Disponível")
                 else:
-                    st.error(f"❌ {d.strftime('%d/%m/%Y')}: {status[chave_busca]}")
+                    st.error(f"❌ {d.strftime('%d/%m/%Y')}: {st_dia[chave_busca]}")
 
-    # BOTÃO SALVAR
-    if st.button("🚀 Gravar Agendamentos", use_container_width=True, type="primary"):
+    if st.button("🚀 Confirmar Agendamentos no CTI", use_container_width=True, type="primary"):
         if not prof or not datas_finais:
-            st.warning("Preencha o professor e selecione as datas.")
+            st.warning("Preencha todos os campos.")
         else:
             df_atual = carregar_dados()
-            conflito = False
+            pode_ir = True
             for d in datas_finais:
                 if analisar_disponibilidade(df_atual, lab, d, turno_sel)[chave_busca] != "Livre":
-                    conflito = True; break
+                    pode_ir = False; break
             
-            if conflito:
-                st.error("Conflito detectado. Corrija as datas antes de salvar.")
+            if not pode_ir:
+                st.error("Conflito detectado. Verifique as datas individualmente.")
             else:
-                novos_dados = []
+                novos = []
                 for d in datas_finais:
-                    novos_dados.append({
-                        "Professor": prof, "Laboratorio": lab, 
-                        "Data": d.strftime('%Y-%m-%d'),
-                        "Turno": turno_sel, "Horario": horario_sel
-                    })
-                df_final = pd.concat([df_atual, pd.DataFrame(novos_dados)], ignore_index=True)
+                    novos.append({"Professor": prof, "Laboratorio": lab, "Data": d.strftime('%Y-%m-%d'), "Turno": turno_sel, "Horario": horario_sel})
+                df_final = pd.concat([df_atual, pd.DataFrame(novos)], ignore_index=True)
                 try:
                     conn.update(data=df_final)
-                    st.success(f"✅ {len(datas_finais)} agendamentos salvos com sucesso!")
+                    st.success(f"✅ {len(datas_finais)} datas agendadas!")
                     st.balloons()
-                except Exception as e: st.error(f"Erro na planilha: {e}")
+                except Exception as e: st.error(f"Erro: {e}")
 
-# --- ABA 2: VISUALIZAÇÃO ---
+# --- ABA 2: AGENDA ---
 with aba_agenda:
-    st.subheader("Agenda Futura")
+    st.subheader("Agenda Atualizada CTI")
     df_raw = carregar_dados()
-    filtro_lab = st.multiselect("Filtrar Laboratórios", LABS, default=LABS)
     if not df_raw.empty:
         df_raw['Data'] = pd.to_datetime(df_raw['Data'], errors='coerce')
-        df_view = df_raw[df_raw['Data'].dt.date >= datetime.now().date()].copy()
-        df_view = df_view[df_view['Laboratorio'].isin(filtro_lab)].sort_values(by="Data")
+        df_view = df_raw[df_raw['Data'].dt.date >= datetime.now().date()].copy().sort_values(by="Data")
         if not df_view.empty:
             df_view['Mes_Ano'] = df_view['Data'].dt.strftime('%B %Y')
-            for mes_en in df_view['Mes_Ano'].unique():
-                mes_pt = mes_en
-                for en, pt in MESES_PT.items(): mes_pt = mes_pt.replace(en, pt)
-                st.markdown(f"#### 📅 {mes_pt}")
-                df_mes = df_view[df_view['Mes_Ano'] == mes_en]
+            for m_en in df_view['Mes_Ano'].unique():
+                m_pt = m_en
+                for en, pt in MESES_PT.items(): m_pt = m_pt.replace(en, pt)
+                st.markdown(f"#### 📅 {m_pt}")
+                df_mes = df_view[df_view['Mes_Ano'] == m_en]
                 for d_dt in sorted(df_mes['Data'].unique()):
                     df_dia = df_mes[df_mes['Data'] == d_dt]
-                    d_str = pd.to_datetime(d_dt).strftime('%d/%m/%Y')
-                    sem_pt = DIAS_PT.get(pd.to_datetime(d_dt).strftime('%A'))
-                    with st.expander(f"{d_str} ({sem_pt})"):
+                    d_s = pd.to_datetime(d_dt).strftime('%d/%m/%Y')
+                    s_pt = DIAS_PT.get(pd.to_datetime(d_dt).strftime('%A'))
+                    with st.expander(f"{d_s} ({s_pt})"):
                         st.table(df_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
-        else: st.info("Sem agendamentos.")
+        else: st.info("Sem agendamentos futuros.")
     else: st.info("Planilha vazia.")
