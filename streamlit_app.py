@@ -24,18 +24,8 @@ hide_elements_style = """
         font-size: 1.1rem;
     }
     
-    .dia-vazio {
-        color: #888;
-        font-style: italic;
-        padding: 5px 0px;
-    }
-    
-    .mes-titulo {
-        color: #004a99;
-        border-bottom: 2px solid #004a99;
-        padding-bottom: 5px;
-        margin-top: 40px;
-    }
+    .dia-vazio { color: #888; font-style: italic; padding: 5px 0px; }
+    .mes-titulo { color: #004a99; border-bottom: 2px solid #004a99; padding-bottom: 5px; margin-top: 40px; }
     </style>
 """
 st.markdown(hide_elements_style, unsafe_allow_html=True)
@@ -61,7 +51,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def carregar_dados():
     try:
         data = conn.read(ttl=0)
-        if data is not None:
+        if data is not None and not data.empty:
             data['Data'] = pd.to_datetime(data['Data'], errors='coerce').dt.date
             return data
         return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario"])
@@ -72,7 +62,6 @@ def carregar_dados():
 hoje = datetime.now().date()
 ano_atual = hoje.year
 
-# Define o fim do semestre atual
 if hoje <= datetime(ano_atual, 6, 30).date():
     fim_periodo = datetime(ano_atual, 6, 30).date()
     nome_semestre = f"{ano_atual}.1"
@@ -85,28 +74,19 @@ with st.sidebar:
     st.title("📌 Sistema CTI")
     st.success(f"📅 Semestre Ativo: {nome_semestre}")
     pagina = st.radio("Navegação:", ["📅 Consulta de Agenda", "🔐 Administração"])
-    if pagina == "🔐 Administração":
-        senha = st.text_input("Senha Admin:", type="password")
-    else: senha = ""
+    senha = st.text_input("Senha Admin:", type="password") if pagina == "🔐 Administração" else ""
 
 # --- 5. CONTEÚDO PRINCIPAL ---
 if pagina == "📅 Consulta de Agenda":
-    st.title(f"📋 Agenda de Laboratórios - Semestre {nome_semestre}")
+    st.title(f"📋 Agenda de Laboratórios - {nome_semestre}")
     df_raw = carregar_dados()
-    
     f_labs = st.multiselect("Filtrar por Laboratório", LABS, default=LABS)
 
-    # Gera o intervalo exato do dia atual até o último dia do semestre
     dias_restantes = (fim_periodo - hoje).days + 1
-    
-    intervalo_datas = []
-    for i in range(dias_restantes):
-        d = hoje + timedelta(days=i)
-        if d.weekday() != 6:  # Pula Domingos
-            intervalo_datas.append(d)
+    intervalo_datas = [hoje + timedelta(days=i) for i in range(dias_restantes) if (hoje + timedelta(days=i)).weekday() != 6]
     
     if not intervalo_datas:
-        st.info("O semestre atual encerrou. Aguarde o início do próximo período.")
+        st.info("Semestre encerrado.")
     else:
         df_cal = pd.DataFrame({'Data': intervalo_datas})
         df_cal['Mes_Ano'] = pd.to_datetime(df_cal['Data']).dt.strftime('%B %Y')
@@ -118,71 +98,76 @@ if pagina == "📅 Consulta de Agenda":
             st.markdown(f'<h2 class="mes-titulo">📅 {m_pt}</h2>', unsafe_allow_html=True)
             
             df_mes = df_cal[df_cal['Mes_Ano'] == m_en]
-            
             for sem_id in df_mes['Semana_ID'].unique():
-                df_sem = df_mes[df_sem['Semana_ID'] == sem_id]
-                inicio_sem = df_sem['Data'].min().strftime('%d/%m')
-                fim_sem = df_sem['Data'].max().strftime('%d/%m')
-                num_semana = pd.to_datetime(df_sem['Data'].min()).isocalendar()[1]
+                # --- CORREÇÃO DO ERRO AQUI ---
+                df_sem_atual = df_mes[df_mes['Semana_ID'] == sem_id]
+                
+                inicio_sem = df_sem_atual['Data'].min().strftime('%d/%m')
+                fim_sem = df_sem_atual['Data'].max().strftime('%d/%m')
+                num_semana = pd.to_datetime(df_sem_atual['Data'].min()).isocalendar()[1]
                 
                 st.markdown(f'<div class="semana-header">Semana {num_semana} ({inicio_sem} a {fim_sem})</div>', unsafe_allow_html=True)
                 
-                for d_dt in sorted(df_sem['Data'].unique()):
-                    d_s = d_dt.strftime('%d/%m/%Y')
-                    s_pt = DIAS_PT.get(d_dt.strftime('%A'))
+                for d_dt in sorted(df_sem_atual['Data'].unique()):
+                    d_s, s_pt = d_dt.strftime('%d/%m/%Y'), DIAS_PT.get(d_dt.strftime('%A'))
                     reserva_dia = df_raw[(df_raw['Data'] == d_dt) & (df_raw['Laboratorio'].isin(f_labs))]
                     
-                    label_dia = f"{d_s} ({s_pt})"
                     if not reserva_dia.empty:
-                        with st.expander(f"🔵 {label_dia} - {len(reserva_dia)} reserva(s)"):
+                        with st.expander(f"🔵 {d_s} ({s_pt}) - {len(reserva_dia)} reserva(s)"):
                             st.table(reserva_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
                     else:
-                        with st.expander(f"⚪ {label_dia} - Disponível"):
+                        with st.expander(f"⚪ {d_s} ({s_pt}) - Disponível"):
                             st.markdown('<p class="dia-vazio">Nenhum agendamento registrado.</p>', unsafe_allow_html=True)
 
 elif pagina == "🔐 Administração":
     st.title("🔐 Painel Administrativo")
     if senha == SENHA_ADMIN:
-        st.success("Acesso Liberado")
-        prof_n = st.text_input("Professor")
-        lab_n = st.selectbox("Laboratório", LABS)
-        modo = st.selectbox("Modo", ["Recorrência Semestral", "Datas Específicas"])
+        tab_add, tab_del = st.tabs(["➕ Novo Agendamento", "🗑️ Gerenciar/Excluir"])
         
-        st.markdown("---")
-        datas_finais = []
-        
-        # Limita o calendário de escolha ao fim do semestre atual para evitar erros
-        max_data_pick = fim_periodo
-        
-        if modo == "Recorrência Semestral":
-            ca, cb = st.columns(2)
-            with ca:
-                d_ini = st.date_input("Início", hoje, min_value=hoje, max_value=max_data_pick)
-                # Calcula quantas semanas faltam para o fim do semestre
-                semanas_restantes = max(1, (max_data_pick - d_ini).days // 7)
-                qtd = st.number_input("Quantidade de semanas", min_value=1, max_value=semanas_restantes + 1, value=semanas_restantes)
-            with cb:
-                freq = st.selectbox("Frequência", ["Semanal", "Quinzenal"])
-                extras = st.multiselect("Datas Extras:", pd.date_range(start=hoje, end=max_data_pick).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
+        with tab_add:
+            prof_n = st.text_input("Professor")
+            lab_n = st.selectbox("Laboratório", LABS)
+            modo = st.selectbox("Modo", ["Recorrência", "Datas Específicas"])
             
-            pulo = 2 if freq == "Quinzenal" else 1
-            for i in range(qtd):
-                d_calc = d_ini + timedelta(weeks=i * pulo)
-                if d_calc <= max_data_pick and d_calc.weekday() != 6:
-                    datas_finais.append(d_calc)
-            datas_finais.extend(extras)
-        else:
-            datas_finais = st.multiselect("Selecione os dias:", pd.date_range(start=hoje, end=max_data_pick).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
-        
-        datas_finais = sorted(list(set(datas_finais)))
-        turno_n = st.radio("Turno", list(OPCOES_POR_TURNO.keys()), horizontal=True)
-        horario_n = st.radio("Horário", OPCOES_POR_TURNO[turno_n], horizontal=True)
-
-        if st.button("🚀 Gravar Agendamentos", use_container_width=True, type="primary"):
-            if not prof_n or not datas_finais: st.warning("Preencha os campos obrigatórios.")
+            datas_finais = []
+            if modo == "Recorrência":
+                c1, c2 = st.columns(2)
+                d_ini = c1.date_input("Início", hoje, min_value=hoje, max_value=fim_periodo)
+                qtd = c2.number_input("Semanas", 1, 20, 1)
+                for i in range(qtd):
+                    d_c = d_ini + timedelta(weeks=i)
+                    if d_c <= fim_periodo and d_c.weekday() != 6: datas_finais.append(d_c)
             else:
+                datas_finais = st.multiselect("Datas:", pd.date_range(hoje, fim_periodo).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
+
+            turno_n = st.radio("Turno", list(OPCOES_POR_TURNO.keys()), horizontal=True)
+            horario_n = st.radio("Horário", OPCOES_POR_TURNO[turno_n], horizontal=True)
+
+            if st.button("🚀 Gravar", use_container_width=True):
                 df_at = carregar_dados()
-                novos = [{"Professor": prof_n, "Laboratorio": lab_n, "Data": d.strftime('%Y-%m-%d'), "Turno": turno_n, "Horario": horario_n} for d in datas_finais]
-                conn.update(data=pd.concat([df_at, pd.DataFrame(novos)], ignore_index=True))
-                st.success(f"✅ Agendamentos para o semestre {nome_semestre} gravados!"); st.balloons()
-    else: st.info("Insira a senha na barra lateral.")
+                novos = pd.DataFrame([{"Professor": prof_n, "Laboratorio": lab_n, "Data": d, "Turno": turno_n, "Horario": horario_n} for d in datas_finais])
+                conn.update(data=pd.concat([df_at, novos], ignore_index=True))
+                st.success("Salvo!"); st.rerun()
+
+        with tab_del:
+            st.subheader("Excluir Agendamentos")
+            df_del = carregar_dados()
+            if not df_del.empty:
+                # Filtro para facilitar a busca do que deletar
+                f_prof = st.selectbox("Filtrar por Professor para deletar", ["Todos"] + list(df_del['Professor'].unique()))
+                df_filtrado_del = df_del if f_prof == "Todos" else df_del[df_del['Professor'] == f_prof]
+                
+                # Exibe a tabela com opção de seleção
+                df_filtrado_del['Selecionar'] = False
+                edited_df = st.data_editor(df_filtrado_del, hide_index=True, use_container_width=True)
+                
+                if st.button("🗑️ Excluir Selecionados", type="secondary"):
+                    indices_para_manter = edited_df[edited_df['Selecionar'] == False].index
+                    # Reatribui o DataFrame original apenas com os itens não selecionados
+                    df_final = df_del.loc[indices_para_manter].drop(columns=['Selecionar'], errors='ignore')
+                    conn.update(data=df_final)
+                    st.warning("Agendamentos removidos!"); st.rerun()
+            else:
+                st.info("Nenhum dado para excluir.")
+    else:
+        st.info("Aguardando senha...")
