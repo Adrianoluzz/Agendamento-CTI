@@ -6,19 +6,26 @@ from datetime import datetime, timedelta
 # --- 1. CONFIGURAÇÕES E ESTILIZAÇÃO ---
 st.set_page_config(page_title="Sistema de Laboratórios CTI", layout="wide", page_icon="📅")
 
-# CSS AJUSTADO: Esconde o "View Source" e o Menu, mas mantém a seta da barra lateral
+# CSS REVISADO: Esconde o "View Source" e Menu, mas GARANTE que a seta lateral apareça
 hide_style = """
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     .stAppDeployButton {display:none;}
-    /* Esconde o ícone de código/GitHub mas mantém a funcionalidade de navegação */
+    /* Esconde o ícone de código/GitHub mas deixa o espaço da barra lateral livre */
     [data-testid="stActionButtonIcon"] {display: none;}
+    
+    /* Garante que o botão de abrir a barra lateral (setinha) seja visível */
+    [data-testid="stSidebarCollapseButton"] {
+        visibility: visible !important;
+        display: block !important;
+        left: 10px !important;
+    }
     </style>
 """
 st.markdown(hide_style, unsafe_allow_html=True)
 
+# --- RESTANTE DO CÓDIGO (IGUAL AO ANTERIOR) ---
 LABS = ["Automação", "Química", "Desenho", "Predial", "Hidráulica", 
         "Civil", "Maquete", "Eletrônica", "Física", "Mecânica"]
 
@@ -31,10 +38,8 @@ OPCOES_POR_TURNO = {
 MESES_PT = {'January': 'Janeiro', 'February': 'Fevereiro', 'March': 'Março', 'April': 'Abril', 'May': 'Maio', 'June': 'Junho', 'July': 'Julho', 'August': 'Agosto', 'September': 'Setembro', 'October': 'Outubro', 'November': 'Novembro', 'December': 'Dezembro'}
 DIAS_PT = {'Monday': 'Segunda-feira', 'Tuesday': 'Terça-feira', 'Wednesday': 'Quarta-feira', 'Thursday': 'Quinta-feira', 'Friday': 'Sexta-feira', 'Saturday': 'Sábado', 'Sunday': 'Domingo'}
 
-# DEFINA SUA SENHA AQUI
 SENHA_ADMIN = "cti123" 
 
-# --- 2. CONEXÃO ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
@@ -63,14 +68,12 @@ def analisar_disponibilidade(df, lab, data, turno):
             status["Completo"] = f"Indisponível - Prof. {prof}"
     return status
 
-# --- 3. BARRA LATERAL (SIDEBAR) ---
 st.sidebar.title("📌 Sistema CTI")
 pagina = st.sidebar.radio("Navegação:", ["📅 Consulta de Agenda", "🔐 Administração"])
 
 if pagina == "📅 Consulta de Agenda":
     st.title("📋 Agenda de Laboratórios")
     df_raw = carregar_dados()
-    
     col_f1, col_f2 = st.columns(2)
     with col_f1:
         filtro_lab = st.multiselect("Filtrar por Laboratório", LABS, default=LABS)
@@ -82,7 +85,6 @@ if pagina == "📅 Consulta de Agenda":
         hoje = datetime.now().date()
         df_view = df_raw.copy() if ver_historico else df_raw[df_raw['Data'].dt.date >= hoje].copy()
         df_view = df_view[df_view['Laboratorio'].isin(filtro_lab)].sort_values(by="Data")
-
         if not df_view.empty:
             df_view['Mes_Ano'] = df_view['Data'].dt.strftime('%B %Y')
             for m_en in df_view['Mes_Ano'].unique():
@@ -92,20 +94,18 @@ if pagina == "📅 Consulta de Agenda":
                 df_mes = df_view[df_view['Mes_Ano'] == m_en]
                 for d_dt in sorted(df_mes['Data'].unique()):
                     df_dia = df_mes[df_mes['Data'] == d_dt]
-                    d_s, s_en = pd.to_datetime(d_dt).strftime('%d/%m/%Y'), pd.to_datetime(d_dt).strftime('%A')
-                    s_pt = DIAS_PT.get(s_en, s_en)
+                    d_s = pd.to_datetime(d_dt).strftime('%d/%m/%Y')
+                    s_pt = DIAS_PT.get(pd.to_datetime(d_dt).strftime('%A'))
                     with st.expander(f"{d_s} ({s_pt})"):
                         st.table(df_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
-        else: st.warning("Nenhum agendamento futuro encontrado.")
+        else: st.warning("Nenhum agendamento encontrado.")
 
 elif pagina == "🔐 Administração":
     st.title("🔐 Painel Administrativo")
     senha_input = st.sidebar.text_input("Digite a senha de Admin:", type="password")
-    
     if senha_input == SENHA_ADMIN:
         st.success("Acesso Liberado")
         st.subheader("Nova Reserva")
-        
         c1, c2, c3 = st.columns([1, 1, 1.2])
         with c1:
             prof = st.text_input("Professor")
@@ -124,8 +124,7 @@ elif pagina == "🔐 Administração":
             if tipo == "Recorrência + Extras":
                 d_ini = st.date_input("Início", datetime.now().date())
                 qtd = st.number_input("Total aulas", min_value=1, value=1)
-                pulo = 2 if freq == "Quinzenal" else 1
-                for i in range(qtd): datas_finais.append(d_ini + timedelta(weeks=i * pulo))
+                for i in range(qtd): datas_finais.append(d_ini + timedelta(weeks=i * (2 if freq == "Quinzenal" else 1)))
             else:
                 datas_finais = st.multiselect("Dias específicos:", pd.date_range(start=datetime.now(), periods=120).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
         with col_d2:
@@ -160,4 +159,4 @@ elif pagina == "🔐 Administração":
                     except Exception as e: st.error(f"Erro: {e}")
     else:
         if senha_input: st.sidebar.error("Senha incorreta")
-        st.warning("⚠️ Insira a senha na barra lateral para acessar as funções de agendamento.")
+        st.warning("⚠️ Insira a senha na barra lateral.")
