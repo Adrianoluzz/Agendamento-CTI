@@ -6,29 +6,22 @@ from datetime import datetime, timedelta
 # --- 1. CONFIGURAÇÕES E ESTILO ---
 st.set_page_config(page_title="Sistema CTI", layout="wide", page_icon="📅")
 
-# CSS para:
-# 1. Esconder o Header (link do código/menu)
-# 2. Esconder a SETA que fecha a barra lateral (Collapse Button)
-# 3. Manter a barra lateral sempre visível
+# CSS: Esconde Header (link do código) e a SETA de fechar a barra lateral
 hide_elements_style = """
     <style>
-    /* Esconde o Header inteiro (onde fica o link de código) */
-    header[data-testid="stHeader"] {
-        visibility: hidden;
-        height: 0px;
-    }
-    
-    /* Esconde especificamente a SETA que oculta a barra lateral */
-    [data-testid="stSidebarCollapseButton"] {
-        display: none !important;
-    }
-    
-    /* Remove o rodapé */
+    header[data-testid="stHeader"] { visibility: hidden; height: 0px; }
+    [data-testid="stSidebarCollapseButton"] { display: none !important; }
     footer {visibility: hidden;}
-
-    /* Ajuste para o conteúdo não ficar colado no topo */
-    .block-container {
-        padding-top: 1rem !important;
+    .block-container { padding-top: 1rem !important; }
+    
+    /* Estilo para destacar o cabeçalho das semanas */
+    .semana-header {
+        background-color: #f0f2f6;
+        padding: 5px 15px;
+        border-radius: 5px;
+        border-left: 5px solid #007bff;
+        margin-top: 10px;
+        margin-bottom: 10px;
     }
     </style>
 """
@@ -74,16 +67,13 @@ def analisar_disponibilidade(df, lab, data, turno):
             status["1º"] = f"Ocupado - Prof. {prof}"; status["2º"] = f"Ocupado - Prof. {prof}"; status["Completo"] = f"Ocupado - Prof. {prof}"
     return status
 
-# --- 3. BARRA LATERAL (FIXA SEM SETA) ---
+# --- 3. BARRA LATERAL ---
 with st.sidebar:
     st.title("📌 Sistema CTI")
-    st.markdown("---")
     pagina = st.radio("Navegação:", ["📅 Consulta de Agenda", "🔐 Administração"])
-    st.markdown("---")
     if pagina == "🔐 Administração":
         senha = st.text_input("Senha Admin:", type="password")
-    else:
-        senha = ""
+    else: senha = ""
 
 # --- 4. CONTEÚDO PRINCIPAL ---
 if pagina == "📅 Consulta de Agenda":
@@ -91,50 +81,63 @@ if pagina == "📅 Consulta de Agenda":
     df_raw = carregar_dados()
     
     col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        filtro_lab = st.multiselect("Filtrar por Laboratório", LABS, default=LABS)
-    with col_f2:
-        ver_historico = st.checkbox("Ver agendamentos passados")
+    with col_f1: f_labs = st.multiselect("Filtrar Lab", LABS, default=LABS)
+    with col_f2: v_hist = st.checkbox("Ver passados")
 
     if not df_raw.empty:
         df_raw['Data'] = pd.to_datetime(df_raw['Data'], errors='coerce')
         hoje = datetime.now().date()
-        df_view = df_raw.copy() if ver_historico else df_raw[df_raw['Data'].dt.date >= hoje].copy()
-        df_view = df_view[df_view['Laboratorio'].isin(filtro_lab)].sort_values(by="Data")
+        df_view = df_raw.copy() if v_hist else df_raw[df_raw['Data'].dt.date >= hoje].copy()
+        df_view = df_view[df_view['Laboratorio'].isin(f_labs)].sort_values(by="Data")
 
         if not df_view.empty:
+            # Criando colunas auxiliares para agrupamento
             df_view['Mes_Ano'] = df_view['Data'].dt.strftime('%B %Y')
+            df_view['Semana'] = df_view['Data'].dt.isocalendar().week
+
             for m_en in df_view['Mes_Ano'].unique():
                 m_pt = m_en
                 for en, pt in MESES_PT.items(): m_pt = m_pt.replace(en, pt)
-                st.markdown(f"### 📅 {m_pt}")
+                st.markdown(f"## 📅 {m_pt}")
+                
                 df_mes = df_view[df_view['Mes_Ano'] == m_en]
-                for d_dt in sorted(df_mes['Data'].unique()):
-                    df_dia = df_mes[df_mes['Data'] == d_dt]
-                    d_s, s_en = pd.to_datetime(d_dt).strftime('%d/%m/%Y'), pd.to_datetime(d_dt).strftime('%A')
-                    s_pt = DIAS_PT.get(s_en, s_en)
-                    with st.expander(f"{d_s} ({s_pt})"):
-                        st.table(df_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
-        else: st.warning("Nenhum agendamento futuro encontrado.")
+                
+                # Agrupando por semana dentro do mês
+                for sem_num in sorted(df_mes['Semana'].unique()):
+                    df_semana = df_mes[df_mes['Semana'] == sem_num]
+                    
+                    # Cálculo do intervalo da semana (Segunda a Domingo)
+                    inicio_sem = df_semana['Data'].min().strftime('%d/%m')
+                    fim_sem = df_semana['Data'].max().strftime('%d/%m')
+                    
+                    st.markdown(f'<div class="semana-header"><b>Semana {sem_num}</b> ({inicio_sem} a {fim_sem})</div>', unsafe_allow_html=True)
+                    
+                    for d_dt in sorted(df_semana['Data'].unique()):
+                        df_dia = df_semana[df_semana['Data'] == d_dt]
+                        d_s = pd.to_datetime(d_dt).strftime('%d/%m/%Y')
+                        s_pt = DIAS_PT.get(pd.to_datetime(d_dt).strftime('%A'))
+                        
+                        with st.expander(f"{d_s} ({s_pt})"):
+                            st.table(df_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
+        else: st.warning("Nenhum agendamento encontrado.")
 
 elif pagina == "🔐 Administração":
     st.title("🔐 Painel Administrativo")
     if senha == SENHA_ADMIN:
         st.success("Acesso Liberado")
-        # Formulário de Agendamento aqui (conforme as versões anteriores)
         prof_n = st.text_input("Professor")
         lab_n = st.selectbox("Laboratório", LABS)
-        tipo_n = st.selectbox("Modo", ["Recorrência", "Datas Avulsas"])
+        modo = st.selectbox("Modo", ["Recorrência", "Datas Avulsas"])
         
         st.markdown("---")
         datas_finais = []
-        if tipo_n == "Recorrência":
-            c_a, c_b = st.columns(2)
-            with c_a:
+        if modo == "Recorrência":
+            ca, cb = st.columns(2)
+            with ca:
                 d_ini = st.date_input("Início", datetime.now().date())
                 qtd = st.number_input("Total aulas", min_value=1, value=1)
                 freq = st.selectbox("Frequência", ["Semanal", "Quinzenal"])
-            with c_b:
+            with cb:
                 extras = st.multiselect("Extras:", pd.date_range(start=datetime.now(), periods=90).date, format_func=lambda x: x.strftime('%d/%m/%Y'))
             for i in range(qtd): datas_finais.append(d_ini + timedelta(weeks=i * (2 if freq == "Quinzenal" else 1)))
             datas_finais.extend(extras)
@@ -156,5 +159,4 @@ elif pagina == "🔐 Administração":
                     novos = [{"Professor": prof_n, "Laboratorio": lab_n, "Data": d.strftime('%Y-%m-%d'), "Turno": turno_n, "Horario": horario_n} for d in datas_finais]
                     conn.update(data=pd.concat([df_at, pd.DataFrame(novos)], ignore_index=True))
                     st.success("Salvo com sucesso!"); st.balloons()
-    else:
-        st.info("Digite a senha correta na barra lateral para acessar.")
+    else: st.info("Digite a senha na barra lateral.")
