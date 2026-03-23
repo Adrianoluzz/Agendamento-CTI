@@ -28,13 +28,11 @@ def carregar_dados():
     except Exception:
         return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario", "Semanas"])
 
-# --- 3. LÓGICA DE INTERSECÇÃO (TRAVAMENTO INTELIGENTE) ---
+# --- 3. LÓGICA DE INTERSECÇÃO (COM MENSAGENS PERSONALIZADAS) ---
 def analisar_disponibilidade(df, lab, data, turno):
-    # Garante que a data esteja no formato de comparação
     df_temp = df.copy()
     df_temp['Data'] = pd.to_datetime(df_temp['Data'], errors='coerce').dt.date
     
-    # Filtra reservas para o mesmo lab, dia e turno
     reservas = df_temp[(df_temp['Laboratorio'] == lab) & 
                        (df_temp['Data'] == data) & 
                        (df_temp['Turno'] == turno)]
@@ -46,15 +44,15 @@ def analisar_disponibilidade(df, lab, data, turno):
         prof = r['Professor']
         
         if "(1º Horário)" in h:
-            status["1º"] = f"Ocupado ({prof})"
-            status["Completo"] = f"Indisponível (1º ocupado por {prof})"
+            status["1º"] = f"Agendamento (1 horario) indisponivel - Prof. {prof}"
+            status["Completo"] = f"Agendamento (completo) indisponivel - Prof. {prof} (1º Horário)"
         elif "(2º Horário)" in h:
-            status["2º"] = f"Ocupado ({prof})"
-            status["Completo"] = f"Indisponível (2º ocupado por {prof})"
+            status["2º"] = f"Agendamento (2 horario) indisponivel - Prof. {prof}"
+            status["Completo"] = f"Agendamento (completo) indisponivel - Prof. {prof} (2º Horário)"
         elif "(Completo)" in h:
-            status["1º"] = f"Ocupado ({prof})"
-            status["2º"] = f"Ocupado ({prof})"
-            status["Completo"] = f"Ocupado ({prof})"
+            status["1º"] = f"Agendamento (1 horario) indisponivel - Prof. {prof}"
+            status["2º"] = f"Agendamento (2 horario) indisponivel - Prof. {prof}"
+            status["Completo"] = f"Agendamento (completo) indisponivel - Prof. {prof}"
             
     return status
 
@@ -67,7 +65,7 @@ with aba_reserva:
     col1, col2, col3 = st.columns([1, 1, 1.2])
     
     with col1:
-        prof = st.text_input("Nome do Professor", placeholder="Ex: Prof. Newton")
+        prof = st.text_input("Nome do Professor")
         lab = st.selectbox("Selecionar Laboratório", LABS)
         data_ini = st.date_input("Data de Início", datetime.now())
 
@@ -80,14 +78,11 @@ with aba_reserva:
 
     st.markdown("---")
     
-    # Identificar qual chave de status checar
     chave_busca = "Completo" if "Completo" in horario_sel else ("1º" if "1º" in horario_sel else "2º")
 
     # BOTÃO: VERIFICAR DISPONIBILIDADE
     if st.button("🔍 Verificar Disponibilidade", use_container_width=True):
         df_atual = carregar_dados()
-        conflitos_encontrados = False
-        
         for i in range(qtd_semanas):
             d_alvo = data_ini + timedelta(weeks=i)
             status_dia = analisar_disponibilidade(df_atual, lab, d_alvo, turno_sel)
@@ -95,26 +90,23 @@ with aba_reserva:
             if status_dia[chave_busca] == "Livre":
                 st.success(f"✅ {d_alvo.strftime('%d/%m/%Y')}: Disponível")
             else:
-                conflitos_encontrados = True
                 st.error(f"❌ {d_alvo.strftime('%d/%m/%Y')}: {status_dia[chave_busca]}")
                 
-                # Sugestão caso o Completo esteja bloqueado
+                # Dica extra se o completo estiver barrado
                 if "Completo" in horario_sel:
                     sugestoes = []
-                    if status_dia["1º"] == "Livre": sugestoes.append("1º Horário")
-                    if status_dia["2º"] == "Livre": sugestoes.append("2º Horário")
+                    if "Livre" in status_dia["1º"]: sugestoes.append("1º Horário")
+                    if "Livre" in status_dia["2º"]: sugestoes.append("2º Horário")
                     if sugestoes:
-                        st.info(f"💡 Dica para {d_alvo.strftime('%d/%m/%Y')}: O {' e '.join(sugestoes)} está vago.")
+                        st.info(f"💡 Dica: O {' e '.join(sugestoes)} está vago nesta data.")
 
     # BOTÃO: SALVAR AGENDAMENTO
-    if st.button("🚀 Confirmar Agendamento", use_container_width=True, type="primary"):
+    if st.button("🚀 Confirmar e Salvar", use_container_width=True, type="primary"):
         if not prof:
             st.warning("⚠️ Digite o nome do professor.")
         else:
             df_atual = carregar_dados()
             pode_gravar = True
-            
-            # Validação final de segurança
             for i in range(qtd_semanas):
                 d_check = data_ini + timedelta(weeks=i)
                 status = analisar_disponibilidade(df_atual, lab, d_check, turno_sel)
@@ -123,7 +115,7 @@ with aba_reserva:
                     break
             
             if not pode_gravar:
-                st.error("⚠️ Conflito detectado! Verifique a disponibilidade antes de tentar salvar.")
+                st.error("⚠️ Conflito de horário detectado! O salvamento foi cancelado.")
             else:
                 novos = []
                 for i in range(qtd_semanas):
@@ -136,12 +128,12 @@ with aba_reserva:
                 df_final = pd.concat([df_atual, pd.DataFrame(novos)], ignore_index=True)
                 try:
                     conn.update(data=df_final)
-                    st.success(f"✅ Agendamento de {qtd_semanas} semana(s) realizado!")
+                    st.success(f"✅ Agendamento realizado!")
                     st.balloons()
                 except Exception as e:
                     st.error(f"Erro ao salvar: {e}")
 
-# --- ABA 2: VISUALIZAÇÃO DA AGENDA ---
+# --- ABA 2: VISUALIZAÇÃO ---
 with aba_agenda:
     st.subheader("Ocupação dos Laboratórios")
     df_raw = carregar_dados()
@@ -150,7 +142,6 @@ with aba_agenda:
     if not df_raw.empty:
         df_raw['Data'] = pd.to_datetime(df_raw['Data'], errors='coerce')
         df_view = df_raw.dropna(subset=['Data']).copy()
-        
         for data_dt in sorted(df_view['Data'].unique()):
             df_dia = df_view[(df_view['Data'] == data_dt) & (df_view['Laboratorio'].isin(filtro_lab))]
             if not df_dia.empty:
