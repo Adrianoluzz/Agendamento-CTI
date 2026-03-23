@@ -16,52 +16,59 @@ OPCOES_POR_TURNO = {
 st.set_page_config(page_title="Gestão de Labs CTI", layout="wide", page_icon="📅")
 st.title("📅 Gestão de Laboratórios - CTI")
 
-# --- 2. CONEXÃO ---
+# --- 2. CONEXÃO COM O GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
     try:
         data = conn.read(ttl=0)
-        return data if data is not None else pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario", "Semanas"])
+        if data is None or data.empty:
+            return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario", "Semanas"])
+        return data
     except Exception:
         return pd.DataFrame(columns=["Professor", "Laboratorio", "Data", "Turno", "Horario", "Semanas"])
 
-# --- 3. FUNÇÃO DE CHECAGEM DE CONFLITO (LÓGICA CRUZADA) ---
-def verificar_conflito(df, lab, data, horario_desejado):
-    # Filtra apenas o laboratório e a data específica
-    df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.date
-    reservas_dia = df[(df['Laboratorio'] == lab) & (df['Data'] == data)]
+# --- 3. LÓGICA DE INTERSECÇÃO (TRAVAMENTO INTELIGENTE) ---
+def analisar_disponibilidade(df, lab, data, turno):
+    # Garante que a data esteja no formato de comparação
+    df_temp = df.copy()
+    df_temp['Data'] = pd.to_datetime(df_temp['Data'], errors='coerce').dt.date
     
-    if reservas_dia.empty:
-        return None # Livre
-
-    for _, reserva in reservas_dia.iterrows():
-        h_existente = reserva['Horario']
+    # Filtra reservas para o mesmo lab, dia e turno
+    reservas = df_temp[(df_temp['Laboratorio'] == lab) & 
+                       (df_temp['Data'] == data) & 
+                       (df_temp['Turno'] == turno)]
+    
+    status = {"1º": "Livre", "2º": "Livre", "Completo": "Livre"}
+    
+    for _, r in reservas.iterrows():
+        h = r['Horario']
+        prof = r['Professor']
         
-        # Regra 1: Se o desejado for COMPLETO, qualquer reserva no turno bloqueia
-        if "(Completo)" in horario_desejado:
-            return f"Ocupado por {reserva['Professor']} ({h_existente})"
-        
-        # Regra 2: Se já existe um COMPLETO, bloqueia qualquer tentativa (1º, 2º ou Completo)
-        if "(Completo)" in h_existente:
-            return f"Ocupado por {reserva['Professor']} (Horário Completo)"
+        if "(1º Horário)" in h:
+            status["1º"] = f"Ocupado ({prof})"
+            status["Completo"] = f"Indisponível (1º ocupado por {prof})"
+        elif "(2º Horário)" in h:
+            status["2º"] = f"Ocupado ({prof})"
+            status["Completo"] = f"Indisponível (2º ocupado por {prof})"
+        elif "(Completo)" in h:
+            status["1º"] = f"Ocupado ({prof})"
+            status["2º"] = f"Ocupado ({prof})"
+            status["Completo"] = f"Ocupado ({prof})"
             
-        # Regra 3: Conflito direto (1º com 1º, ou 2º com 2º)
-        if horario_desejado == h_existente:
-            return f"Ocupado por {reserva['Professor']} ({h_existente})"
-            
-    return None
+    return status
 
 # --- 4. INTERFACE ---
 aba_reserva, aba_agenda = st.tabs(["🆕 Novo Agendamento", "📋 Visualizar Agenda"])
 
 with aba_reserva:
-    st.subheader("Nova Reserva")
+    st.subheader("Configurar Nova Reserva")
+    
     col1, col2, col3 = st.columns([1, 1, 1.2])
     
     with col1:
-        prof = st.text_input("Nome do Professor")
-        lab = st.selectbox("Laboratório", LABS)
+        prof = st.text_input("Nome do Professor", placeholder="Ex: Prof. Newton")
+        lab = st.selectbox("Selecionar Laboratório", LABS)
         data_ini = st.date_input("Data de Início", datetime.now())
 
     with col2:
@@ -73,37 +80,50 @@ with aba_reserva:
 
     st.markdown("---")
     
-    # --- BOTÃO VERIFICAR ---
+    # Identificar qual chave de status checar
+    chave_busca = "Completo" if "Completo" in horario_sel else ("1º" if "1º" in horario_sel else "2º")
+
+    # BOTÃO: VERIFICAR DISPONIBILIDADE
     if st.button("🔍 Verificar Disponibilidade", use_container_width=True):
         df_atual = carregar_dados()
-        conflitos = []
-        for i in range(qtd_semanas):
-            d = data_ini + timedelta(weeks=i)
-            resultado = verificar_conflito(df_atual, lab, d, horario_sel)
-            if resultado:
-                conflitos.append(f"{d.strftime('%d/%m/%Y')}: {resultado}")
+        conflitos_encontrados = False
         
-        if conflitos:
-            for c in conflitos: st.error(c)
-        else:
-            st.success("✅ Laboratório disponível para todas as datas!")
+        for i in range(qtd_semanas):
+            d_alvo = data_ini + timedelta(weeks=i)
+            status_dia = analisar_disponibilidade(df_atual, lab, d_alvo, turno_sel)
+            
+            if status_dia[chave_busca] == "Livre":
+                st.success(f"✅ {d_alvo.strftime('%d/%m/%Y')}: Disponível")
+            else:
+                conflitos_encontrados = True
+                st.error(f"❌ {d_alvo.strftime('%d/%m/%Y')}: {status_dia[chave_busca]}")
+                
+                # Sugestão caso o Completo esteja bloqueado
+                if "Completo" in horario_sel:
+                    sugestoes = []
+                    if status_dia["1º"] == "Livre": sugestoes.append("1º Horário")
+                    if status_dia["2º"] == "Livre": sugestoes.append("2º Horário")
+                    if sugestoes:
+                        st.info(f"💡 Dica para {d_alvo.strftime('%d/%m/%Y')}: O {' e '.join(sugestoes)} está vago.")
 
-    # --- BOTÃO SALVAR (Com checagem automática antes de gravar) ---
+    # BOTÃO: SALVAR AGENDAMENTO
     if st.button("🚀 Confirmar Agendamento", use_container_width=True, type="primary"):
         if not prof:
-            st.warning("Informe o nome do professor.")
+            st.warning("⚠️ Digite o nome do professor.")
         else:
             df_atual = carregar_dados()
-            conflitos_finais = []
+            pode_gravar = True
             
-            # Checagem de segurança de última hora
+            # Validação final de segurança
             for i in range(qtd_semanas):
-                d = data_ini + timedelta(weeks=i)
-                if verificar_conflito(df_atual, lab, d, horario_sel):
-                    conflitos_finais.append(d.strftime('%d/%m/%Y'))
+                d_check = data_ini + timedelta(weeks=i)
+                status = analisar_disponibilidade(df_atual, lab, d_check, turno_sel)
+                if status[chave_busca] != "Livre":
+                    pode_gravar = False
+                    break
             
-            if conflitos_finais:
-                st.error(f"Não foi possível salvar. Conflito nas datas: {', '.join(conflitos_finais)}")
+            if not pode_gravar:
+                st.error("⚠️ Conflito detectado! Verifique a disponibilidade antes de tentar salvar.")
             else:
                 novos = []
                 for i in range(qtd_semanas):
@@ -116,20 +136,26 @@ with aba_reserva:
                 df_final = pd.concat([df_atual, pd.DataFrame(novos)], ignore_index=True)
                 try:
                     conn.update(data=df_final)
-                    st.success("✅ Agendamento realizado!")
+                    st.success(f"✅ Agendamento de {qtd_semanas} semana(s) realizado!")
                     st.balloons()
                 except Exception as e:
                     st.error(f"Erro ao salvar: {e}")
 
+# --- ABA 2: VISUALIZAÇÃO DA AGENDA ---
 with aba_agenda:
-    # (Mantém o mesmo código de visualização anterior)
+    st.subheader("Ocupação dos Laboratórios")
     df_raw = carregar_dados()
     filtro_lab = st.multiselect("Filtrar Laboratórios", LABS, default=LABS)
+    
     if not df_raw.empty:
         df_raw['Data'] = pd.to_datetime(df_raw['Data'], errors='coerce')
         df_view = df_raw.dropna(subset=['Data']).copy()
+        
         for data_dt in sorted(df_view['Data'].unique()):
             df_dia = df_view[(df_view['Data'] == data_dt) & (df_view['Laboratorio'].isin(filtro_lab))]
             if not df_dia.empty:
-                with st.expander(f"📅 {data_dt.strftime('%d/%m/%Y')} - {data_dt.strftime('%A')}"):
+                label = f"📅 {data_dt.strftime('%d/%m/%Y')} - {data_dt.strftime('%A')}"
+                with st.expander(label):
                     st.table(df_dia[["Horario", "Laboratorio", "Professor"]].sort_values(by="Horario"))
+    else:
+        st.info("Agenda vazia.")
